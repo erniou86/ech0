@@ -1,0 +1,5 @@
+ech0
+data.db
+test-*.db
+*.log
+.DS_Store
