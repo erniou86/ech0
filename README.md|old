@@ -1,0 +1,157 @@
+# Ech0 Chat
+
+这是一个基于 Go + SQLite 的轻量自托管聊天平台，保留了原来的极简发布平台思路，并升级为可直接使用的浏览器聊天应用。
+
+它适合用于：
+- 个人站点内置聊天
+- 小型自托管社区
+- 公开聊天室/私聊实验项目
+- 开发中后台协作讨论
+- 低成本部署的轻量即时聊天服务
+
+## 功能
+
+- 浏览器端直接访问
+- 用户注册（昵称登录）
+- 房间创建与列表
+- 私聊/群聊场景的房间消息流
+- 消息历史保留
+- SQLite 本地数据存储
+- Docker 友好部署
+- 低门槛自托管
+
+## 技术栈
+
+- Go 1.22+
+- SQLite
+- 原生 HTTP + JSON API
+- 原生前端页面（无额外依赖）
+
+## 目录结构
+
+```text
+.
+├── main.go
+├── main_test.go
+├── go.mod
+├── Dockerfile
+├── LICENSE
+└── README.md
+```
+
+## 本地运行
+
+```bash
+go run main.go
+```
+
+访问：
+
+```text
+http://localhost:8080
+```
+
+## 环境变量
+
+```bash
+PORT=8080
+DB_PATH=./chat.db
+```
+
+## Docker 运行
+
+```bash
+docker build -t ech0-chat .
+docker run --rm -p 8080:8080 -v $(pwd)/data:/data ech0-chat
+```
+
+如果你直接使用默认 `DB_PATH`，可以在容器内设定环境变量：
+
+```bash
+docker run --rm -p 8080:8080 -e PORT=8080 -e DB_PATH=/data/chat.db -v $(pwd)/data:/data ech0-chat
+```
+
+## API
+
+### 注册用户
+
+```bash
+POST /api/users/register
+Content-Type: application/json
+
+{"display_name":"alice"}
+```
+
+### 创建房间
+
+```bash
+POST /api/rooms
+Content-Type: application/json
+
+{"name":"general","description":"欢迎大家交流"}
+```
+
+### 获取房间列表
+
+```bash
+GET /api/rooms
+```
+
+### 发送消息
+
+```bash
+POST /api/rooms/:room_id/messages
+Content-Type: application/json
+
+{"user_id":1,"content":"hello everyone"}
+```
+
+### 获取房间消息
+
+```bash
+GET /api/rooms/:room_id/messages
+```
+
+### 健康检查
+
+```bash
+GET /health
+```
+
+## 说明
+
+这是轻量版聊天平台，适合在你已有的 `ech0` 代码基础上继续扩展：
+- 接入真实用户认证
+- 加入 WebSocket 实时推送
+- 接入 Redis
+- 接入 LiveKit 音视频
+- 接入文件上传与对象存储
+- 接入 AI 内容审核
+- 支持多租户和群组权限
+
+## 测试
+
+```bash
+go test -v ./...
+```
+
+## License
+
+MIT License
+
+由原有 `ech0` 轻量项目扩展为聊天平台版本，保留开源 MIT 协议。
+
+## 适合的下一步升级
+
+如果你要做成真正的“全球聊天网站”，建议下一步继续升级：
+
+1. 加入 WebSocket 推送
+2. 加入用户登录/注册/邮箱验证
+3. 加入头像和消息附件
+4. 加入私信和好友列表
+5. 加入 WebRTC 音视频和 TURN
+6. 加入桌面端/移动端分离前端
+7. 加入服务端账号与主站 SSO 集成
+8. 加入 CDN 和对��存储
+
+这是一个可直接下载并部署的小型聊天系统雏形，适合作为你的下一代自托管聊天项目起点。
