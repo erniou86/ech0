@@ -1,85 +1,160 @@
-# Ech0
+package main
 
-极简自托管发布平台：碎片记录、标签、搜索、RSS。单二进制部署，内存占用极低。
-**适用人群**：追求轻量自托管的个人写作者、极客与数字花园爱好者，希望用最小成本长期运行个人记录服务的用户。
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+)
 
-## 功能特性
+func openTestDB() (*sql.DB, error) {
+	return sql.Open("sqlite3", os.Getenv("DB_PATH"))
+}
 
-- 碎片 CRUD（文字/链接/待办）
-- 标签分类与全文搜索
-- RSS 2.0 输出
-- 内置极简 Web UI（零前端构建）
-- SQLite 嵌入式存储，单文件数据库
+func setupTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	name := "test-" + strings.ReplaceAll(t.Name(), "/", "-") + ".db"
+	if err := os.Setenv("DB_PATH", name); err != nil {
+		t.Fatal(err)
+	}
 
-## 技术栈与目录结构
+	var err error
+	db, err = openTestDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := initDB(); err != nil {
+		t.Fatal(err)
+	}
 
-**技术栈**：Go 1.22 / SQLite（mattn/go-sqlite3）/ 内置零构建 Web UI
+	ts := httptest.NewServer(http.HandlerFunc(route))
+	t.Cleanup(func() {
+		ts.Close()
+		db.Close()
+		_ = os.Remove(name)
+	})
+	return ts
+}
 
-```
-ech0/
-├── main.go        # 入口（HTTP 服务 + SQLite 存储）
-├── main_test.go   # 单元测试
-├── go.mod
-├── Dockerfile
-└── LICENSE
-```
+func TestHealth(t *testing.T) {
+	ts := setupTestServer(t)
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
 
-## 快速开始
+func TestRegisterUserAndCreateRoom(t *testing.T) {
+	ts := setupTestServer(t)
 
-```bash
-# 本地运行
-go run main.go
-# http://localhost:8080
+	resp, err := http.Post(ts.URL+"/api/users/register", "application/json", bytes.NewBufferString(`{"display_name":"alice"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
 
-# 构建单二进制
-go build -o ech0 .
-./ech0
+	var user User
+	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	if user.DisplayName != "alice" {
+		t.Fatalf("unexpected user name: %s", user.DisplayName)
+	}
 
-# 运行测试
-go test -v ./...
-```
+	resp2, err := http.Post(ts.URL+"/api/rooms", "application/json", bytes.NewBufferString(`{"name":"general","description":"welcome"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp2.StatusCode)
+	}
 
-**Docker 部署**
+	var room Room
+	if err := json.NewDecoder(resp2.Body).Decode(&room); err != nil {
+		t.Fatal(err)
+	}
+	if room.Name != "general" {
+		t.Fatalf("unexpected room name: %s", room.Name)
+	}
 
-```bash
-docker build -t ech0 .
-docker run -p 8080:8080 -v ech0-data:/data ech0
-```
+	resp3, err := http.Post(ts.URL+"/api/rooms/"+strconv.Itoa(room.ID)+"/messages", "application/json", bytes.NewBufferString(`{"user_id":`+strconv.Itoa(user.ID)+`,"content":"hello everyone"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp3.StatusCode)
+	}
 
-**环境变量**
+	resp4, err := http.Get(ts.URL + "/api/rooms/" + strconv.Itoa(room.ID) + "/messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp4.StatusCode)
+	}
 
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `PORT` | 8080 | 监听端口 |
-| `DB_PATH` | ./data.db | SQLite 文件路径 |
+	var messages []Message
+	if err := json.NewDecoder(resp4.Body).Decode(&messages); err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].Content != "hello everyone" {
+		t.Fatalf("unexpected messages: %+v", messages)
+	}
+}
 
-**部署说明**：可编译为单一可执行文件部署到任意 Linux 服务器/VPS，或使用 Docker 容器化运行；SQLite 单文件数据库便于备份迁移。
+func TestListRooms(t *testing.T) {
+	ts := setupTestServer(t)
+	_, err := http.Post(ts.URL+"/api/rooms", "application/json", bytes.NewBufferString(`{"name":"tech","description":"dev room"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 
-## 验证状态
+	resp, err := http.Get(ts.URL + "/api/rooms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
 
-引用 AI Factory 全套件验证报告（[VERIFICATION.md](../../VERIFICATION.md)，2026-09-18）：
+	var rooms []Room
+	if err := json.NewDecoder(resp.Body).Decode(&rooms); err != nil {
+		t.Fatal(err)
+	}
+	if len(rooms) != 1 || rooms[0].Name != "tech" {
+		t.Fatalf("unexpected room list: %+v", rooms)
+	}
+}
 
-- 仓库提供 go.mod / main.go / main_test.go / Dockerfile / README / LICENSE，代码完整
-- 本机未安装 Go 工具链，未做本地编译；在具备 Go 1.22+ 的环境可直接 `go test ./...` 验证（main_test.go 含单元测试）
-- Docker 部署路径：`docker build -t ech0 . && docker run -p 8080:8080 ech0`
-
-## API
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/notes?q=&tag=&page=&size=` | 列表（搜索/标签/分页） |
-| POST | `/api/notes` | 创建 `{content, tags}` |
-| GET | `/api/notes/:id` | 详情 |
-| DELETE | `/api/notes/:id` | 删除 |
-| GET | `/api/rss` | RSS feed |
-| GET | `/health` | 健康检查 |
-
-## License
-
-MIT License，详见 [LICENSE](LICENSE)。本项目代码与文档由 AI 辅助生成，仅供参考与学习使用。
-
-## 支持项目
-
-如果这个项目对你有帮助，欢迎赞助支持持续开发：
-
-[![PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?style=flat-square&logo=paypal)](https://paypal.me/Junlong439)
+func route(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.URL.Path == "/":
+		indexHandler(w, r)
+	case r.URL.Path == "/health":
+		healthHandler(w, r)
+	case r.URL.Path == "/api/users/register":
+		registerUserHandler(w, r)
+	case r.URL.Path == "/api/rooms":
+		roomsHandler(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/rooms/"):
+		roomMessagesHandler(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
